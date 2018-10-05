@@ -10,16 +10,22 @@ import (
 	"github.com/karalabe/gousb/usbid"
 )
 
+// Handler responds to a pressing or releasing action on a button
 type Handler interface {
+
+	// Handle is the callback that is called if a button is pressed (down=true)
+	// or released (down=false)
 	Handle(d Device, x, y uint8, down bool)
 }
 
+// HandlerFunc is a function that acts as a Handler
 type HandlerFunc func(d Device, x, y uint8, down bool)
 
 func (h HandlerFunc) Handle(d Device, x, y uint8, down bool) {
 	h(d, x, y, down)
 }
 
+// Device is a monome device
 type Device interface {
 	// Set sets the button at position x,y to the given brightness
 	// If the connection has been closed, nothing is sent
@@ -31,10 +37,10 @@ type Device interface {
 	// June 2012 devices allow the full 16 intensity levels.
 	Set(x, y, brightness uint8)
 
-	// shortcut for Set(x,y,15)
+	// On is a shortcut for Set(x,y,15)
 	On(x, y uint8)
 
-	// shortcut for Set(x,y,0)
+	// Off is a shortcut for Set(x,y,0)
 	Off(x, y uint8)
 
 	// Close closes the connection to the monome
@@ -43,22 +49,34 @@ type Device interface {
 	// IsClosed returns wether the connection is closed
 	IsClosed() bool
 
+	// NumButtons returns the available number of buttons
 	NumButtons() uint8
 
+	// String returns an identifier as a string (name)
 	String() string
 
+	// SetHandler set the active handler for the device
 	SetHandler(Handler)
 
+	// AllOff switches all lights off
 	AllOff()
 
+	// AllOn switches all lights on
 	AllOn()
 
+	// Print shows the given string in a marquee-like manner (from left to right)
 	Print(s string)
 
+	// StartListering starts listening for button events. For errors the given errHandler is called
 	StartListening(errHandler func(error))
+
+	// StopListening stops listening for button events
 	StopListening()
 
+	// Rows returns the number of rows
 	Rows() uint8
+
+	// Cols returns the number of cols
 	Cols() uint8
 
 	// Read reads a message from the device and calls the handler if necessary
@@ -416,5 +434,3 @@ func printDevice(dev *usb.Device) {
 		}
 	}
 }
-
-
