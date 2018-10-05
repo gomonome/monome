@@ -13,8 +13,6 @@ go get -d github.com/gomonome/monome/...
 
 ## Example
 
-We use an `io.Writer` to write to and `io.Reader` to read from. They are connected by the same `io.Pipe`.
-
 ```go
 package main
 
@@ -25,7 +23,7 @@ import (
 	"github.com/gomonome/monome"
 )
 
-func do(dev rawusb.Device) {
+func do(dev monome.Device) {
 	dev.Print(dev.String())
 	dev.SetHandler(monome.HandlerFunc(Handle))
 	dev.StartListening(func(err error) {
@@ -54,7 +52,7 @@ func main() {
 
 	
 	for _, dev := range devices {
-		go func(d rawusb.Device) {
+		go func(d monome.Device) {
 			do(d)
 		}(dev)
 	}
@@ -67,7 +65,7 @@ func main() {
 }
 
 // highlight the pressed buttons
-func Handle(d rawusb.Device, x, y uint8, down bool) {
+func Handle(d monome.Device, x, y uint8, down bool) {
 	if down {
 		fmt.Printf("%s pressed %v/%v\n", d, x, y)
 		d.On(x, y)
