@@ -64,8 +64,11 @@ type Device interface {
 	// AllOn switches all lights on
 	AllOn()
 
-	// Print shows the given string in a marquee-like manner (from left to right)
-	Print(s string)
+	// Marquee shows the given string in a marquee-like manner (from left to right)
+	Marquee(s string, dur time.Duration)
+
+	// Print prints the string one letter after another
+	Print(s string, dur time.Duration)
 
 	// StartListering starts listening for button events. For errors the given errHandler is called
 	StartListening(errHandler func(error))
@@ -94,8 +97,8 @@ type monomeDevice interface {
 	String() string
 }
 
-var _ monomeDevice = &monome64{}
-var _ monomeDevice = &monome128{}
+var _ monomeDevice = &m64{}
+var _ monomeDevice = &m128{}
 
 type monome struct {
 	monomeDevice
@@ -106,31 +109,33 @@ type monome struct {
 	closed            bool
 	mx                sync.RWMutex
 	maxPacketSizeRead uint16
-	ticker            *time.Ticker
-	pollInterval      time.Duration
-	usbConfig         uint8
-	usbIffNumber      uint8
-	usbSetupNumber    uint8
-	usbReaderAddress  uint8
-	usbWriterAddress  uint8
+	//	ticker            *time.Ticker
+	pollInterval time.Duration
+	/*
+		usbConfig         uint8
+		usbIffNumber      uint8
+		usbSetupNumber    uint8
+		usbReaderAddress  uint8
+		usbWriterAddress  uint8
+	*/
+	doneChan chan bool
 }
 
-func marquee(m Device, s string) {
+func marquee(m Device, s string, dur time.Duration) {
 	s = strings.ToLower(s)
 	m.AllOff()
 
-	// cols is the linear row of all letters, where each letter has 8 cols
+	// cols is the linear row of all letters, where each letter has some cols
 	//var cols = make([][8]bool, len(s)*8)
 	var cols [][8]bool
 
 	for _, l := range s {
-
-		letter := [8][8]bool{}
-
 		lt, has := Letters[l]
 		if !has {
 			continue
 		}
+
+		letter := make([][8]bool, LetterWidth[l])
 
 		for pt, v := range lt {
 			if v {
@@ -158,13 +163,16 @@ func marquee(m Device, s string) {
 			}
 			targetCol++
 		}
-		time.Sleep(time.Millisecond * 70)
+		//time.Sleep(time.Millisecond * 60)
+		time.Sleep(dur)
 	}
 }
 
-func (m *monome) Print(s string) {
-	marquee(m, s)
-	return
+func (m *monome) Marquee(s string, dur time.Duration) {
+	marquee(m, s, dur)
+}
+
+func (m *monome) Print(s string, dur time.Duration) {
 	s = strings.ToLower(s)
 	m.AllOff()
 	for _, l := range s {
@@ -177,9 +185,9 @@ func (m *monome) Print(s string) {
 				m.On(pt[0], pt[1])
 			}
 		}
-		time.Sleep(time.Millisecond * 500)
+		time.Sleep(dur)
 		m.AllOff()
-		time.Sleep(time.Millisecond * 300)
+		time.Sleep(dur / 2)
 	}
 
 }
@@ -189,22 +197,36 @@ func (m *monome) StartListening(errHandler func(error)) {
 }
 
 func (m *monome) poll(errHandler func(error), d Device) {
-	if m.ticker != nil {
-		m.ticker.Stop()
-	}
-	m.ticker = time.NewTicker(m.pollInterval)
+	/*
+		if m.ticker != nil {
+			m.ticker.Stop()
+		}
+		m.ticker = time.NewTicker(m.pollInterval)
+	*/
+	m.doneChan = make(chan bool)
+	tickChan := time.NewTicker(m.pollInterval).C
 
 	if errHandler == nil {
 		go func() {
-			for range m.ticker.C {
-				d.Read()
+			for {
+				select {
+				case <-tickChan:
+					d.Read()
+				case <-m.doneChan:
+					return
+				}
 			}
 		}()
 	} else {
 		go func() {
-			for range m.ticker.C {
-				if err := d.Read(); err != nil {
-					errHandler(err)
+			for {
+				select {
+				case <-tickChan:
+					if err := d.Read(); err != nil {
+						errHandler(err)
+					}
+				case <-m.doneChan:
+					return
 				}
 			}
 		}()
@@ -212,17 +234,15 @@ func (m *monome) poll(errHandler func(error), d Device) {
 }
 
 func (m *monome) StopListening() {
-	if m.ticker != nil {
-		m.ticker.Stop()
-	}
+	m.doneChan <- true
 }
 
 func (m *monome) Flash() {
 	m.worm()
-	time.Sleep(time.Millisecond * 250)
-	m.AllOn()
-	time.Sleep(time.Second)
-	m.AllOff()
+	//	time.Sleep(time.Millisecond * 100)
+	//	m.AllOn()
+	//	time.Sleep(time.Millisecond * 300)
+	//	m.AllOff()
 }
 
 func (m *monome) worm() {
@@ -242,7 +262,7 @@ func (m *monome) worm() {
 		}
 		for y >= 0 && y < int(cols) {
 
-			time.Sleep(time.Millisecond * 7)
+			time.Sleep(time.Millisecond * 4)
 			mx.Lock()
 			wg.Add(1)
 			//m.On(x, uint8(y))
@@ -251,7 +271,7 @@ func (m *monome) worm() {
 			//			println(x, y)
 
 			go func(_x, _y uint8) {
-				time.Sleep(time.Millisecond * (i*i*i*7 + 180))
+				time.Sleep(time.Millisecond * (i*i*i*7 + 47))
 				mx.Lock()
 				m.Off(_x, _y)
 				wg.Done()
@@ -353,19 +373,29 @@ func newMonome(dev *usb.Device, options ...Option) (d *monome, err error) {
 	m.usbWriter.Write([]byte{0x01, 0x00, 0x00})
 	time.Sleep(time.Second)
 	var b = make([]byte, m.maxPacketSizeRead)
-	m.usbReader.Read(b)
+	ln, err := m.usbReader.Read(b)
 
-	//fmt.Printf("% X (%s) len: %v\n", b[:ln], string(b[:ln]), ln)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = ln
+
+	//	fmt.Printf("% X (%s) len: %v\n", b[:ln], string(b[:ln]), ln)
+
+	//	monome16x8 = "m1000293" -> 0xF4365 oder 1000293
+	//
+	//	monome8x8  = "m64-0348" -> 0x15C
 
 	if string(b[3:13]) == "monome 128" {
-		m.monomeDevice = &monome128{m}
+		m.monomeDevice = &m128{m}
 		//		m.Flash()
 		return m, nil
 	}
 
 	if b[0] == 0x31 {
 		//		fmt.Println("monome64")
-		m.monomeDevice = &monome64{m}
+		m.monomeDevice = &m64{m}
 		//		m.Flash()
 		return m, nil
 	}

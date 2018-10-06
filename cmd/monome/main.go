@@ -3,12 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"time"
 
 	"github.com/gomonome/monome"
 )
 
 func do(dev monome.Device) {
-	dev.Print(dev.String())
+	dev.Marquee(dev.String(), time.Millisecond*80)
+	for i := 0; i < 3; i++ {
+		time.Sleep(time.Millisecond * 20)
+		dev.AllOn()
+		time.Sleep(time.Millisecond * 90)
+		dev.AllOff()
+	}
 	dev.SetHandler(monome.HandlerFunc(Handle))
 	dev.StartListening(func(err error) {
 		fmt.Fprintf(os.Stderr, "can't read from monome %s: %v\n", dev, err)
@@ -20,7 +28,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "please run as root")
 		os.Exit(1)
 	}
-	var c chan bool
 
 	devices, err := monome.Devices()
 
@@ -40,11 +47,23 @@ func main() {
 		}(dev)
 	}
 
-	<-c
+	sigchan := make(chan os.Signal, 10)
+
+	// listen for ctrl+c
+	go signal.Notify(sigchan, os.Interrupt)
+
+	// interrupt has happend
+	<-sigchan
+
+	fmt.Fprint(os.Stdout, "\ninterrupted, cleaning up...")
+
 	for _, dev := range devices {
 		dev.StopListening()
+		time.Sleep(time.Millisecond * 100)
 		dev.Close()
 	}
+	fmt.Fprintln(os.Stdout, "done")
+	os.Exit(0)
 }
 
 // highlight the pressed buttons

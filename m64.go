@@ -1,20 +1,20 @@
 package monome
 
-type monome64 struct{ mn *monome }
+type m64 struct{ mn *monome }
 
-func (m *monome64) String() string { return "monome64" }
-func (m *monome64) Rows() uint8    { return 8 }
-func (m *monome64) Cols() uint8    { return 8 }
-func (m *monome64) Off(x, y uint8) {
+func (m *m64) String() string { return "monome64" }
+func (m *m64) Rows() uint8    { return 8 }
+func (m *m64) Cols() uint8    { return 8 }
+func (m *m64) Off(x, y uint8) {
 	y = changeY(y)
 	m.mn.usbWriter.Write([]byte{0x30, (x << 4) | y})
 }
-func (m *monome64) On(x, y uint8) {
+func (m *m64) On(x, y uint8) {
 	y = changeY(y)
 	m.mn.usbWriter.Write([]byte{0x21, (x << 4) | y})
 }
 
-func (m *monome64) Set(x, y, brightness uint8) {
+func (m *m64) Set(x, y, brightness uint8) {
 	if brightness > 0 {
 		m.On(x, y)
 		return
@@ -22,7 +22,7 @@ func (m *monome64) Set(x, y, brightness uint8) {
 	m.Off(x, y)
 }
 
-func (m *monome64) Read() error {
+func (m *m64) Read() error {
 	var b = make([]byte, m.mn.maxPacketSizeRead)
 	got, err := m.mn.usbReader.Read(b)
 

@@ -3,6 +3,7 @@ package monome
 import (
 	"bytes"
 	"sort"
+	"time"
 )
 
 type sortByCol [][2]int
@@ -110,8 +111,15 @@ func (m *multi) String() string {
 	return bf.String()
 }
 
-func (m *multi) Print(s string) {
-	marquee(m, s)
+func (m *multi) Marquee(s string, dur time.Duration) {
+	marquee(m, s, dur)
+}
+
+func (m *multi) Print(s string, dur time.Duration) {
+	for _, dev := range m.devices {
+		dev.Print(s, dur)
+	}
+
 }
 
 func (m *multi) Read() error {
