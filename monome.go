@@ -2,6 +2,7 @@ package monome
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -35,13 +36,12 @@ type Device interface {
 	// [8, 11] - medium intensity
 	// [12, 15] - high intensity
 	// June 2012 devices allow the full 16 intensity levels.
-	Set(x, y, brightness uint8)
+	Set(x, y, brightness uint8) error
 
-	// On is a shortcut for Set(x,y,15)
-	On(x, y uint8)
-
-	// Off is a shortcut for Set(x,y,0)
-	Off(x, y uint8)
+	// Switches the light at x,y on or off
+	// If on is true, it is a shortcut for  Set(x,y,15).
+	// If on is false it is a shortcut for Set(x,y,0)
+	Switch(x, y uint8, on bool) error
 
 	// Close closes the connection to the monome
 	Close() error
@@ -58,17 +58,14 @@ type Device interface {
 	// SetHandler set the active handler for the device
 	SetHandler(Handler)
 
-	// AllOff switches all lights off
-	AllOff()
-
-	// AllOn switches all lights on
-	AllOn()
+	// SwitchAll switches all lights on or off
+	SwitchAll(on bool) error
 
 	// Marquee shows the given string in a marquee-like manner (from left to right)
-	Marquee(s string, dur time.Duration)
+	Marquee(s string, dur time.Duration) error
 
 	// Print prints the string one letter after another
-	Print(s string, dur time.Duration)
+	Print(s string, dur time.Duration) error
 
 	// StartListering starts listening for button events. For errors the given errHandler is called
 	StartListening(errHandler func(error))
@@ -90,22 +87,25 @@ type Device interface {
 type monomeDevice interface {
 	Rows() uint8
 	Cols() uint8
-	Set(x, y, brightness uint8)
-	On(x, y uint8)
-	Off(x, y uint8)
+	Set(x, y, brightness uint8) error
+
+	// Switches the light at x,y on or off
+	Switch(x, y uint8, on bool) error
+
 	Read() error
 	String() string
 }
 
 var _ monomeDevice = &m64{}
 var _ monomeDevice = &m128{}
+var _ monomeDevice = &testdevice{}
 
 type monome struct {
 	monomeDevice
-	dev               *usb.Device
+	dev               io.Closer //    *usb.Device
 	h                 Handler
-	usbReader         usb.Endpoint
-	usbWriter         usb.Endpoint
+	usbReader         io.Reader //  usb.Endpoint
+	usbWriter         io.Writer // usb.Endpoint
 	closed            bool
 	mx                sync.RWMutex
 	maxPacketSizeRead uint16
@@ -121,9 +121,16 @@ type monome struct {
 	doneChan chan bool
 }
 
-func marquee(m Device, s string, dur time.Duration) {
+func marquee(m Device, s string, dur time.Duration) error {
+	var errs Errors
 	s = strings.ToLower(s)
-	m.AllOff()
+	err := m.SwitchAll(false)
+	if err != nil {
+		e := err.(*Errors)
+		e.Task = fmt.Sprintf("blank (switch all off) before marquee on device %s", m.String())
+		errs.Add(e)
+		return &errs
+	}
 
 	// cols is the linear row of all letters, where each letter has some cols
 	//var cols = make([][8]bool, len(s)*8)
@@ -155,10 +162,16 @@ func marquee(m Device, s string, dur time.Duration) {
 		for j := i; j < (i+width) && j < len(cols); j++ {
 
 			for row, on := range cols[j] {
-				if on {
-					m.On(uint8(row), targetCol)
-				} else {
-					m.Off(uint8(row), targetCol)
+				err = m.Switch(uint8(row), targetCol, on)
+				if err != nil {
+					e := err.(Error)
+					what := "off"
+					if on {
+						what = "on"
+					}
+					e.Task = fmt.Sprintf("switch %s %d/%d on device %s while marqueing", what, uint8(row), targetCol, m.String())
+					errs.Add(e)
+					return &errs
 				}
 			}
 			targetCol++
@@ -166,15 +179,26 @@ func marquee(m Device, s string, dur time.Duration) {
 		//time.Sleep(time.Millisecond * 60)
 		time.Sleep(dur)
 	}
+
+	return nil
 }
 
-func (m *monome) Marquee(s string, dur time.Duration) {
-	marquee(m, s, dur)
+func (m *monome) Marquee(s string, dur time.Duration) error {
+	return marquee(m, s, dur)
 }
 
-func (m *monome) Print(s string, dur time.Duration) {
+func (m *monome) Print(s string, dur time.Duration) error {
+	var errs Errors
 	s = strings.ToLower(s)
-	m.AllOff()
+	err := m.SwitchAll(false)
+
+	if err != nil {
+		e := err.(*Errors)
+		e.Task = fmt.Sprintf("blank (switch all off) before printing on device %s", m.String())
+		errs.Add(e)
+		return &errs
+	}
+
 	for _, l := range s {
 		lt, has := Letters[l]
 		if !has {
@@ -182,13 +206,27 @@ func (m *monome) Print(s string, dur time.Duration) {
 		}
 		for pt, v := range lt {
 			if v {
-				m.On(pt[0], pt[1])
+				err = m.Switch(pt[0], pt[1], true)
+				if err != nil {
+					e := err.(Error)
+					e.Task = fmt.Sprintf("switch on %d/%d on device %s to print letter %q", pt[0], pt[1], m.String(), string(l))
+					errs.Add(e)
+					return &errs
+				}
 			}
 		}
 		time.Sleep(dur)
-		m.AllOff()
+		err = m.SwitchAll(false)
+		if err != nil {
+			e := err.(*Errors)
+			e.Task = fmt.Sprintf("blank (switch all off) after printing letter %q on device %s", string(l), m.String())
+			errs.Add(e)
+			return &errs
+		}
 		time.Sleep(dur / 2)
 	}
+
+	return nil
 
 }
 
@@ -273,7 +311,7 @@ func (m *monome) worm() {
 			go func(_x, _y uint8) {
 				time.Sleep(time.Millisecond * (i*i*i*7 + 47))
 				mx.Lock()
-				m.Off(_x, _y)
+				m.Switch(_x, _y, false)
 				wg.Done()
 				mx.Unlock()
 			}(x, uint8(y))
@@ -290,24 +328,26 @@ func (m *monome) worm() {
 	wg.Wait()
 }
 
-func (m *monome) AllOff() {
+// SwitchAll switches all lights on or off.
+func (m *monome) SwitchAll(on bool) error {
+	var errs Errors
 	rows := m.Rows()
 	cols := m.Cols()
 	for x := uint8(0); x < rows; x++ {
 		for y := uint8(0); y < cols; y++ {
-			m.Off(x, y)
+			errs.Add(m.Switch(x, y, on))
 		}
 	}
-}
+	if errs.Len() == 0 {
+		return nil
+	}
 
-func (m *monome) AllOn() {
-	rows := m.Rows()
-	cols := m.Cols()
-	for x := uint8(0); x < rows; x++ {
-		for y := uint8(0); y < cols; y++ {
-			m.On(x, y)
-		}
+	if on {
+		errs.Task = "switch all on"
+	} else {
+		errs.Task = "switch all off"
 	}
+	return &errs
 }
 
 func (m *monome) IsClosed() bool {
@@ -324,7 +364,15 @@ func (m *monome) Close() (err error) {
 		err = m.dev.Close()
 	}
 	m.mx.Unlock()
-	return err
+
+	if err == nil {
+		return
+	}
+
+	return CloseError{
+		Device:       m.String(),
+		WrappedError: err,
+	}
 }
 
 func (m *monome) SetHandler(h Handler) {
@@ -337,15 +385,17 @@ func (m *monome) NumButtons() uint8 {
 	return m.Rows() * m.Cols()
 }
 
-// newMonome returns a new monome device for the given usb.Device.
+var defaultPollInterval = 4 * time.Millisecond
+
+// New returns a new monome device for the given usb.Device.
 // Normally New should not be called directly, but
-// Monome64, Monome128 or All instead (which make use of New).
-func newMonome(dev *usb.Device, options ...Option) (d *monome, err error) {
+// Devices instead (which make use of New).
+func New(dev *usb.Device, options ...Option) (d *monome, err error) {
 	//printDevice(dev)
 	var m = &monome{
 		dev: dev,
 		//pollInterval: 7 * time.Millisecond,
-		pollInterval: 4 * time.Millisecond,
+		pollInterval: defaultPollInterval,
 	}
 
 	for _, opt := range options {
@@ -356,10 +406,21 @@ func newMonome(dev *usb.Device, options ...Option) (d *monome, err error) {
 	iff := cfg.Interfaces[0]
 	setup := iff.Setups[0]
 
+	//	var t string = setup.Endpoints[0].Address
+
 	m.usbReader, err = dev.OpenEndpoint(cfg.Config, iff.Number, setup.Number, setup.Endpoints[0].Address)
 
 	if err != nil {
-		return nil, err
+		var e ConnectError
+		e.USBDevice = dev
+		e.USBEndPoint.Purpose = "usbReader"
+		e.USBEndPoint.Number = 0
+		e.USBEndPoint.Config = cfg.Config
+		e.USBEndPoint.Interface = iff.Number
+		e.USBEndPoint.Setup = setup.Number
+		e.USBEndPoint.Info = setup.Endpoints[0]
+		e.WrappedError = err
+		return nil, &e
 	}
 	m.maxPacketSizeRead = setup.Endpoints[0].MaxPacketSize
 
@@ -367,19 +428,36 @@ func newMonome(dev *usb.Device, options ...Option) (d *monome, err error) {
 
 	m.usbWriter, err = dev.OpenEndpoint(cfg.Config, iff.Number, setup.Number, setup.Endpoints[1].Address)
 	if err != nil {
-		return nil, err
+		var e ConnectError
+		e.USBDevice = dev
+		e.USBEndPoint.Purpose = "usbWriter"
+		e.USBEndPoint.Number = 1
+		e.USBEndPoint.Config = cfg.Config
+		e.USBEndPoint.Interface = iff.Number
+		e.USBEndPoint.Setup = setup.Number
+		e.USBEndPoint.Info = setup.Endpoints[1]
+		e.WrappedError = err
+		return nil, &e
 	}
 
-	m.usbWriter.Write([]byte{0x01, 0x00, 0x00})
-	time.Sleep(time.Second)
-	var b = make([]byte, m.maxPacketSizeRead)
-	ln, err := m.usbReader.Read(b)
+	var errs Errors
+
+	_, err = m.usbWriter.Write([]byte{0x01, 0x00, 0x00})
 
 	if err != nil {
-		return nil, err
+		errs.Add(err)
+		errs.Task = "initial write to find out the kind of monome"
+		return nil, &errs
 	}
+	time.Sleep(time.Second)
+	var b = make([]byte, m.maxPacketSizeRead)
+	_, err = m.usbReader.Read(b)
 
-	_ = ln
+	if err != nil {
+		errs.Add(err)
+		errs.Task = "initial read to find out the kind of monome"
+		return nil, &errs
+	}
 
 	//	fmt.Printf("% X (%s) len: %v\n", b[:ln], string(b[:ln]), ln)
 
@@ -399,13 +477,19 @@ func newMonome(dev *usb.Device, options ...Option) (d *monome, err error) {
 		//		m.Flash()
 		return m, nil
 	}
-	return nil, fmt.Errorf("unknown % X (%s)\n", b, string(b))
+
+	var e UnknownMonomeError
+	e.Response = b
+	e.USBDevice = dev
+	e.USBReaderEndPoint = setup.Endpoints[0]
+	e.USBWriterEndPoint = setup.Endpoints[1]
+	return nil, &e
 
 }
 
 // serial = udev_device_get_property_value(d, "ID_SERIAL_SHORT");
 
-func printDevice(dev *usb.Device) {
+func PrintUSBDevice(dev *usb.Device) {
 	desc := dev.Descriptor
 	fmt.Printf(
 		"Bus: %v\nAddress: %v\nVendorID: %v\nProductID: %v\nclass: %v\nsubclass: %v\nprotocol: %v\nClass: %s\nDescribe: %s\n Spec: %#v\n Device: %#v\n\n",

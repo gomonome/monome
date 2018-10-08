@@ -1,7 +1,7 @@
 package monome
 
 import (
-	"bytes"
+	"fmt"
 	"sort"
 	"time"
 )
@@ -20,28 +20,33 @@ func (c sortByCol) Swap(a, b int) {
 	c[a], c[b] = c[b], c[a]
 }
 
-type multi struct {
+type rowDevice struct {
 	devices      []Device
 	colToDev     sortByCol
 	devToCol     map[int]uint8
 	devNameToDev map[string]int
+	name         string
 }
 
-// Multi creates a large unified device out of a row of multiple devices.
+// RowDevice creates a unified device out of a row of devices.
 // The order is from left to right.
 // The number of columns is the sum of the columns of the devices.
 // The number of rows is the smallest number of rows of any device.
-func Multi(devices ...Device) Device {
-	m := &multi{
+func RowDevice(name string, devices ...Device) Device {
+	m := &rowDevice{
 		devices:      devices,
 		devToCol:     map[int]uint8{},
 		devNameToDev: map[string]int{},
+		name:         name,
+	}
+	if m.name == "" {
+		m.name = "monome row"
 	}
 	m.calcOffsets()
 	return m
 }
 
-func (m *multi) calcOffsets() {
+func (m *rowDevice) calcOffsets() {
 	// find out the starting column for the device
 	var startCol int
 	for i, dev := range m.devices {
@@ -54,7 +59,7 @@ func (m *multi) calcOffsets() {
 }
 
 // Cols is the sum of the cols of the devices
-func (m *multi) Cols() uint8 {
+func (m *rowDevice) Cols() uint8 {
 	var cols uint8
 
 	for _, dev := range m.devices {
@@ -64,11 +69,26 @@ func (m *multi) Cols() uint8 {
 	return cols
 }
 
-func (m *multi) On(x, y uint8)  { m.Set(x, y, 15) }
-func (m *multi) Off(x, y uint8) { m.Set(x, y, 0) }
+func (m *rowDevice) Switch(x, y uint8, on bool) error {
+	var bightness uint8
+	if on {
+		bightness = 15
+	}
+	err := m.Set(x, y, bightness)
+	if err == nil {
+		return nil
+	}
+	e := err.(Error)
+	if on {
+		e.Task = fmt.Sprintf("switch on (%d/%d in row device)", x, y)
+	} else {
+		e.Task = fmt.Sprintf("switch off (%d/%d in row device)", x, y)
+	}
+	return e
+}
 
 // Set sets the lights to the corresponding device
-func (m *multi) Set(x, y, brightness uint8) {
+func (m *rowDevice) Set(x, y, brightness uint8) error {
 	var dev int = 0
 	var offset int = 0
 	for _, mp := range m.colToDev {
@@ -78,10 +98,17 @@ func (m *multi) Set(x, y, brightness uint8) {
 		offset += mp[0]
 		dev = mp[1]
 	}
-	m.devices[dev].Set(x, y-uint8(offset), brightness)
+	err := m.devices[dev].Set(x, y-uint8(offset), brightness)
+	if err == nil {
+		return nil
+	}
+
+	e := err.(Error)
+	e.Task = fmt.Sprintf("set brightness to %d (%d/%d in row device)", brightness, x, y)
+	return e
 }
 
-func (m *multi) SetHandler(h Handler) {
+func (m *rowDevice) SetHandler(h Handler) {
 	for _, dev := range m.devices {
 		dev.SetHandler(HandlerFunc(func(d Device, x, y uint8, down bool) {
 			h.Handle(m, x, m.devToCol[m.devNameToDev[d.String()]]+y, down)
@@ -89,50 +116,51 @@ func (m *multi) SetHandler(h Handler) {
 	}
 }
 
-func (m *multi) StartListening(errHandler func(error)) {
+func (m *rowDevice) StartListening(errHandler func(error)) {
 	for _, dev := range m.devices {
 		dev.StartListening(errHandler)
 	}
 }
 
-func (m *multi) StopListening() {
+func (m *rowDevice) StopListening() {
 	for _, dev := range m.devices {
 		dev.StopListening()
 	}
 }
 
-func (m *multi) String() string {
-	var bf bytes.Buffer
-	bf.WriteString("<Multi ")
-	for _, dev := range m.devices {
-		bf.WriteString(dev.String() + "/")
-	}
-	bf.WriteString(">")
-	return bf.String()
+func (m *rowDevice) String() string {
+	return m.name
 }
 
-func (m *multi) Marquee(s string, dur time.Duration) {
-	marquee(m, s, dur)
+func (m *rowDevice) Marquee(s string, dur time.Duration) error {
+	return marquee(m, s, dur)
 }
 
-func (m *multi) Print(s string, dur time.Duration) {
+func (m *rowDevice) Print(s string, dur time.Duration) error {
+	var errs Errors
 	for _, dev := range m.devices {
-		dev.Print(s, dur)
+		errs.Add(dev.Print(s, dur))
 	}
 
+	if errs.Len() == 0 {
+		return nil
+	}
+
+	errs.Task = fmt.Sprintf("printing %q to row device %s", s, m.String())
+	return &errs
 }
 
-func (m *multi) Read() error {
+func (m *rowDevice) Read() error {
 	panic("don't call me")
 }
 
 // NumButtons is the number of available buttons (cols*rows)
-func (m *multi) NumButtons() uint8 {
+func (m *rowDevice) NumButtons() uint8 {
 	return m.Cols() * m.Rows()
 }
 
 // Rows returns the minimum of rows, each device has
-func (m *multi) Rows() uint8 {
+func (m *rowDevice) Rows() uint8 {
 	var rows uint8
 	for _, dev := range m.devices {
 		if dev.Rows() < rows || rows == 0 {
@@ -143,28 +171,39 @@ func (m *multi) Rows() uint8 {
 	return rows
 }
 
-func (m *multi) AllOff() {
+// SwitchAll switches all lights on or off
+// It returns the last error that happens and keeps trying to switch the rest as an error happens.
+func (m *rowDevice) SwitchAll(on bool) error {
+	var errs Errors
 	for _, dev := range m.devices {
-		dev.AllOff()
+		errs.Add(dev.SwitchAll(on))
 	}
-}
-
-func (m *multi) AllOn() {
-	for _, dev := range m.devices {
-		dev.AllOn()
+	if errs.Len() == 0 {
+		return nil
 	}
+	if on {
+		errs.Task = "switch all on (row device)"
+	} else {
+		errs.Task = "switch all off (row device)"
+	}
+	return &errs
 }
 
 // Close closes all devices
-func (m *multi) Close() error {
+func (m *rowDevice) Close() error {
+	var errs Errors
 	for _, dev := range m.devices {
-		dev.Close()
+		errs.Add(dev.Close())
 	}
-	return nil
+
+	if errs.Len() == 0 {
+		return nil
+	}
+	return &errs
 }
 
 // IsClosed only returns true, if all devices are closed
-func (m *multi) IsClosed() bool {
+func (m *rowDevice) IsClosed() bool {
 	for _, dev := range m.devices {
 		if !dev.IsClosed() {
 			return false

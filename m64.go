@@ -1,25 +1,42 @@
 package monome
 
+import "fmt"
+
 type m64 struct{ mn *monome }
 
 func (m *m64) String() string { return "monome64" }
 func (m *m64) Rows() uint8    { return 8 }
 func (m *m64) Cols() uint8    { return 8 }
-func (m *m64) Off(x, y uint8) {
+func (m *m64) Switch(x, y uint8, on bool) error {
 	y = changeY(y)
-	m.mn.usbWriter.Write([]byte{0x30, (x << 4) | y})
-}
-func (m *m64) On(x, y uint8) {
-	y = changeY(y)
-	m.mn.usbWriter.Write([]byte{0x21, (x << 4) | y})
+	var first byte = 0x30
+	if on {
+		first = 0x21
+	}
+	_, err := m.mn.usbWriter.Write([]byte{first, (x << 4) | y})
+	if err != nil {
+		var e Error
+		e.Device = m.String()
+		e.X = x
+		e.Y = y
+		e.WrappedError = err
+		if on {
+			e.Task = "switch on"
+		} else {
+			e.Task = "switch off"
+		}
+	}
+	return nil
 }
 
-func (m *m64) Set(x, y, brightness uint8) {
-	if brightness > 0 {
-		m.On(x, y)
-		return
+func (m *m64) Set(x, y, brightness uint8) error {
+	err := m.Switch(x, y, brightness > 0)
+	if err == nil {
+		return nil
 	}
-	m.Off(x, y)
+	e := err.(Error)
+	e.Task = fmt.Sprintf("set brightness to %d", brightness)
+	return e
 }
 
 func (m *m64) Read() error {
@@ -27,7 +44,7 @@ func (m *m64) Read() error {
 	got, err := m.mn.usbReader.Read(b)
 
 	if err != nil {
-		return err
+		return ReadError{Device: m.String(), WrappedError: err}
 	}
 
 	if m.mn.h != nil && got > 2 {
