@@ -4,91 +4,202 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
+	"sort"
 	"time"
 
 	"github.com/gomonome/monome"
+	"github.com/metakeule/config"
 )
 
-func do(dev monome.Device) error {
-	err := dev.Marquee(dev.String(), time.Millisecond*80)
+var (
+	devices      = map[string]monome.Device{}
+	sigchan      = make(chan os.Signal, 10)
+	stopScanning = make(chan bool)
+	cleanup      = make(chan bool)
+	removeDevice = make(chan monome.Device, 4)
+	addDevice    = make(chan monome.Device, 4)
+
+	cfg = config.MustNew("monome", "0.0.2", "demo a monome")
+
+	rowCommand = cfg.MustCommand("row", "creates a rowdevice, based on all devices that could be found")
+	argRowName = rowCommand.NewString("name", "name of the row device", config.Default("ROW"))
+
+	scanCommand = cfg.MustCommand("scan", "scan for devices, allows to continously attach and detach devices")
+)
+
+func initDevice(dev monome.Device) error {
+	var speed = time.Millisecond * 100
+	if dev.String() == "monome64" {
+		speed = time.Millisecond * 80
+	}
+	if dev.String() == "monome128" {
+		speed = time.Millisecond * 50
+	}
+	err := dev.Marquee(dev.String(), speed)
 	if err != nil {
 		return err
 	}
-	for i := 0; i < 3; i++ {
-		time.Sleep(time.Millisecond * 20)
-		err = dev.SwitchAll(true)
-		if err != nil {
-			return err
-		}
-		time.Sleep(time.Millisecond * 90)
-		err = dev.SwitchAll(false)
-		if err != nil {
-			return err
-		}
-	}
 	dev.SetHandler(monome.HandlerFunc(Handle))
 	dev.StartListening(func(err error) {
-		fmt.Fprintf(os.Stderr, "can't read from monome %s: %v, stop listening\n", dev, err)
-		dev.StopListening()
-		//		cleanup()
-		os.Exit(1)
+		removeDevice <- dev
 	})
 	return nil
 }
 
-var devices []monome.Device
-
-func main() {
-	if os.Getenv("USER") != "root" {
-		fmt.Fprintln(os.Stderr, "please run as root")
-		os.Exit(1)
-	}
-
-	var err error
-
-	devices, err = monome.Devices()
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v", err)
-		os.Exit(1)
-	}
-
-	if len(devices) < 1 {
-		fmt.Fprintln(os.Stderr, "no monome device found")
-		os.Exit(1)
-	}
-
-	for _, dev := range devices {
-		go func(d monome.Device) {
-			err := do(d)
-			if err != nil {
-				fmt.Printf("ERROR: %v\n", err)
+func manageDevices() {
+	for {
+		select {
+		case dev := <-removeDevice:
+			dev.StopListening()
+			time.Sleep(time.Millisecond * 30)
+			dev.Close()
+			delete(devices, dev.String())
+		case dev := <-addDevice:
+			devices[dev.String()] = dev
+			go func(d monome.Device) {
+				err := initDevice(d)
+				if err != nil {
+					fmt.Printf("ERROR: %v\n", err)
+					removeDevice <- d
+				}
+			}(dev)
+		case <-cleanup:
+			fmt.Println("cleanup")
+			for _, dev := range devices {
+				dev.StopListening()
+				time.Sleep(time.Millisecond * 100)
+				dev.Close()
 			}
-		}(dev)
+			return
+		default:
+			runtime.Gosched()
+		}
 	}
-
-	sigchan := make(chan os.Signal, 10)
-
-	// listen for ctrl+c
-	go signal.Notify(sigchan, os.Interrupt)
-
-	// interrupt has happend
-	<-sigchan
-
-	fmt.Fprint(os.Stdout, "\ninterrupted, ")
-	cleanup()
-	os.Exit(0)
 }
 
-func cleanup() {
-	fmt.Fprint(os.Stdout, "cleaning up...")
+func scanForDevices() {
+	t := time.NewTicker(time.Second)
+	for {
+		select {
+		case <-stopScanning:
+			fmt.Println("stop scanning")
+			t.Stop()
+			return
+		case <-t.C:
+			devs, _ := monome.Devices()
 
-	for _, dev := range devices {
-		dev.StopListening()
-		//time.Sleep(time.Millisecond * 100)
-		//dev.Close()
+			for _, dev := range devs {
+				addDevice <- dev
+			}
+		default:
+			runtime.Gosched()
+
+		}
 	}
-	fmt.Fprintln(os.Stdout, "done")
+}
+
+type Devices []monome.Device
+
+func (d Devices) Len() int {
+	return len(d)
+}
+
+func (d Devices) Swap(a, b int) {
+	d[a], d[b] = d[b], d[a]
+}
+
+func (d Devices) Less(a, b int) bool {
+	return d[a].NumButtons() < d[b].NumButtons()
+}
+
+func run() error {
+	err := cfg.Run()
+
+	if err != nil {
+		return err
+	}
+
+	if os.Getenv("USER") != "root" {
+		return fmt.Errorf("please run as root")
+	}
+
+	switch cfg.ActiveCommand() {
+	case rowCommand:
+		devs, _ := monome.Devices()
+
+		if len(devs) == 0 {
+			return fmt.Errorf("no monome devices found")
+		}
+
+		sdevs := Devices(devs)
+		sort.Sort(sdevs)
+
+		go manageDevices()
+		addDevice <- monome.RowDevice(argRowName.Get(), []monome.Device(sdevs)...)
+
+		// listen for ctrl+c
+		go signal.Notify(sigchan, os.Interrupt)
+
+		// interrupt has happend
+		<-sigchan
+
+		fmt.Fprint(os.Stdout, "\ninterrupted, cleaning up...")
+		cleanup <- true
+		fmt.Fprint(os.Stdout, "done\n")
+		os.Exit(0)
+
+	case scanCommand:
+		go manageDevices()
+		go scanForDevices()
+
+		// listen for ctrl+c
+		go signal.Notify(sigchan, os.Interrupt)
+
+		// interrupt has happend
+		<-sigchan
+
+		fmt.Fprint(os.Stdout, "\ninterrupted, cleaning up...")
+		stopScanning <- true
+		cleanup <- true
+		fmt.Fprint(os.Stdout, "done\n")
+		os.Exit(0)
+	default:
+		devs, _ := monome.Devices()
+
+		if len(devs) == 0 {
+			return fmt.Errorf("no monome devices found")
+		}
+		go manageDevices()
+
+		for _, dev := range devs {
+			addDevice <- dev
+		}
+
+		// listen for ctrl+c
+		go signal.Notify(sigchan, os.Interrupt)
+
+		// interrupt has happend
+		<-sigchan
+
+		fmt.Fprint(os.Stdout, "\ninterrupted, cleaning up...")
+		cleanup <- true
+		fmt.Fprint(os.Stdout, "done\n")
+		os.Exit(0)
+	}
+
+	return nil
+
+}
+
+func main() {
+	err := run()
+
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
+
 }
 
 // highlight the pressed buttons

@@ -26,6 +26,9 @@ type rowDevice struct {
 	devToCol     map[int]uint8
 	devNameToDev map[string]int
 	name         string
+	cols         uint8
+	rows         uint8
+	numbuttons   uint8
 }
 
 // RowDevice creates a unified device out of a row of devices.
@@ -49,24 +52,33 @@ func RowDevice(name string, devices ...Device) Device {
 func (m *rowDevice) calcOffsets() {
 	// find out the starting column for the device
 	var startCol int
+	var cols uint8
+	var rows uint8
+
 	for i, dev := range m.devices {
 		m.colToDev = append(m.colToDev, [2]int{startCol, i})
 		m.devToCol[i] = uint8(startCol)
 		m.devNameToDev[dev.String()] = i
 		startCol += int(dev.Cols())
+		cols += dev.Cols()
+		if dev.Rows() < rows || rows == 0 {
+			rows = dev.Rows()
+		}
 	}
+	m.cols = cols
+	m.rows = rows
+	m.numbuttons = cols * rows
 	sort.Sort(m.colToDev)
+}
+
+// Rows returns the minimum of rows, each device has
+func (m *rowDevice) Rows() uint8 {
+	return m.rows
 }
 
 // Cols is the sum of the cols of the devices
 func (m *rowDevice) Cols() uint8 {
-	var cols uint8
-
-	for _, dev := range m.devices {
-		cols += dev.Cols()
-	}
-
-	return cols
+	return m.cols
 }
 
 func (m *rowDevice) Switch(x, y uint8, on bool) error {
@@ -129,7 +141,7 @@ func (m *rowDevice) StopListening() {
 }
 
 func (m *rowDevice) String() string {
-	return m.name
+	return fmt.Sprintf("%s%d", m.name, m.numbuttons)
 }
 
 func (m *rowDevice) Marquee(s string, dur time.Duration) error {
@@ -156,19 +168,7 @@ func (m *rowDevice) ReadMessage() error {
 
 // NumButtons is the number of available buttons (cols*rows)
 func (m *rowDevice) NumButtons() uint8 {
-	return m.Cols() * m.Rows()
-}
-
-// Rows returns the minimum of rows, each device has
-func (m *rowDevice) Rows() uint8 {
-	var rows uint8
-	for _, dev := range m.devices {
-		if dev.Rows() < rows || rows == 0 {
-			rows = dev.Rows()
-		}
-	}
-
-	return rows
+	return m.numbuttons
 }
 
 // SwitchAll switches all lights on or off

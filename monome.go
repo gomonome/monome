@@ -135,7 +135,16 @@ func (m *monome) Read(b []byte) (int, error) {
 		return 0, ConnectionClosedError(m.String())
 	}
 
-	return m.usbReader.Read(b)
+	i, err := m.usbReader.Read(b)
+	if err != nil {
+		fmt.Printf("stopping read/write to device %s, because of reading error: %v\n", m.String(), err)
+		m.mx.Lock()
+		m.closed = true
+		m.mx.Unlock()
+		//m.doneChan <- true
+		//close(m.doneChan)
+	}
+	return i, err
 }
 
 func (m *monome) Write(b []byte) (int, error) {
@@ -147,12 +156,22 @@ func (m *monome) Write(b []byte) (int, error) {
 		return 0, ConnectionClosedError(m.String())
 	}
 
-	return m.usbWriter.Write(b)
+	i, err := m.usbWriter.Write(b)
+	if err != nil {
+		fmt.Printf("stopping read/write to device %s, because of writing error: %v\n", m.String(), err)
+		m.mx.Lock()
+		m.closed = true
+		m.mx.Unlock()
+		//m.doneChan <- true
+		//close(m.doneChan)
+	}
+	return i, err
 }
 
 func marquee(m Device, s string, dur time.Duration) error {
 	var errs Errors
 	s = strings.ToLower(s)
+	s += " "
 	err := m.SwitchAll(false)
 	if err != nil {
 		e := err.(*Errors)
@@ -260,7 +279,7 @@ func (m *monome) Print(s string, dur time.Duration) error {
 }
 
 func (m *monome) StartListening(errHandler func(error)) {
-	m.poll(errHandler, m)
+	go m.poll(errHandler, m)
 }
 
 func (m *monome) poll(errHandler func(error), d Device) {
@@ -270,70 +289,81 @@ func (m *monome) poll(errHandler func(error), d Device) {
 		}
 		m.ticker = time.NewTicker(m.pollInterval)
 	*/
-	m.doneChan = make(chan bool)
 	ticker := time.NewTicker(m.pollInterval)
 	tickChan := ticker.C
 
 	if errHandler == nil {
-		go func() {
-			for {
-				select {
-				case <-tickChan:
-					var closed bool
-					m.mx.RLock()
-					closed = m.closed
-					m.mx.RUnlock()
-					if closed {
-						return
-					}
-					err := d.ReadMessage()
-					if err != nil {
-						fmt.Printf("stop listening, because could not read from device %s: %v", m.String(), err)
-						ticker.Stop()
-						close(m.doneChan)
-						m.mx.Lock()
-						m.closed = true
-						m.mx.Unlock()
-						return
-					}
-				case <-m.doneChan:
+		//go func() {
+		for {
+			select {
+			case <-tickChan:
+				var closed bool
+				m.mx.RLock()
+				closed = m.closed
+				m.mx.RUnlock()
+				if closed {
 					return
 				}
+				err := d.ReadMessage()
+				if err != nil {
+					fmt.Printf("stop listening, because could not read from device %s: %v\n", m.String(), err)
+					ticker.Stop()
+					m.mx.Lock()
+					m.closed = true
+					m.mx.Unlock()
+					//close(m.doneChan)
+					return
+				}
+			case <-m.doneChan:
+				return
 			}
-		}()
+		}
+		//}()
 	} else {
-		go func() {
-			for {
-				select {
-				case <-tickChan:
-					var closed bool
-					m.mx.RLock()
-					closed = m.closed
-					m.mx.RUnlock()
-					if closed {
-						errHandler(ConnectionClosedError(m.String()))
-						return
-					}
-					if err := d.ReadMessage(); err != nil {
-						errHandler(err)
-						fmt.Printf("stop listening, because could not read from device %s: %v", m.String(), err)
-						ticker.Stop()
-						close(m.doneChan)
-						m.mx.Lock()
-						m.closed = true
-						m.mx.Unlock()
-						return
-					}
-				case <-m.doneChan:
+		//go func() {
+		for {
+			select {
+			case <-tickChan:
+				var closed bool
+				m.mx.RLock()
+				closed = m.closed
+				m.mx.RUnlock()
+				if closed {
+					errHandler(ConnectionClosedError(m.String()))
 					return
 				}
+				if err := d.ReadMessage(); err != nil {
+					errHandler(err)
+					fmt.Printf("stop listening, because could not read from device %s: %v\n", m.String(), err)
+					ticker.Stop()
+					m.mx.Lock()
+					m.closed = true
+					m.mx.Unlock()
+					//close(m.doneChan)
+					return
+				}
+			case <-m.doneChan:
+				return
 			}
-		}()
+		}
+		//}()
 	}
 }
 
 func (m *monome) StopListening() {
+	var closed bool
+	m.mx.RLock()
+	closed = m.closed
+	m.mx.RUnlock()
+	if closed {
+		return
+	}
+
+	m.mx.Lock()
+	m.closed = true
 	m.doneChan <- true
+	//close(m.doneChan)
+	m.mx.Unlock()
 }
 
 func (m *monome) Flash() {
@@ -473,6 +503,7 @@ func New(dev *usb.Device, options ...Option) (d *monome, err error) {
 		//pollInterval: 7 * time.Millisecond,
 		pollInterval: defaultPollInterval,
 	}
+	m.doneChan = make(chan bool)
 
 	for _, opt := range options {
 		opt(m)

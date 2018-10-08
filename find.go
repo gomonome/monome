@@ -61,23 +61,23 @@ func find(which string, options ...Option) ([]Device, error) {
 
 	var ms []Device
 
+	var errs Errors
+
 	for _, dev := range devs {
 		m, errM := New(dev, options...)
 		if errM != nil {
-			return ms, errM
+			errs.Add(errM)
+			continue
 		}
 
-		//if which == "" || m.String() == which {
-		fmt.Printf("found: %s (%d buttons)\n", m, m.NumButtons())
+		fmt.Printf("opened: %s (%d buttons)\n", m, m.NumButtons())
 		m.Flash()
 		ms = append(ms, m)
-		//}
-		/*
-			else {
-				//	dev.Close()
-			}
-		*/
 	}
 
-	return ms, nil
+	if errs.Len() == 0 {
+		return ms, nil
+	}
+
+	return ms, &errs
 }
