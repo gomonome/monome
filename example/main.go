@@ -1,19 +1,3 @@
-# monome
-Go library to program the monome
-
-[![Documentation](http://godoc.org/github.com/gomonome/monome?status.png)](http://godoc.org/github.com/gomonome/monome)
-
-## Installation
-
-It is recommended to use Go 1.11 with module support (`$GO111MODULE=on`).
-
-```
-go get -d github.com/gomonome/monome/...
-```
-
-## Example
-
-```go
 package main
 
 import (
@@ -80,11 +64,3 @@ func main() {
 	fmt.Fprintln(os.Stdout, "done")
 	os.Exit(0)
 }
-
-
-```
-
-
-## License
-
-MIT (see LICENSE file) 

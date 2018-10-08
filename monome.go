@@ -109,6 +109,7 @@ type monome struct {
 	usbWriter         io.Writer // usb.Endpoint
 	closed            bool
 	mx                sync.RWMutex
+	listeningStopped  chan bool
 	maxpacketSizeRead uint16
 	//	ticker            *time.Ticker
 	pollInterval time.Duration
@@ -315,6 +316,9 @@ func (m *monome) poll(errHandler func(error), d Device) {
 					return
 				}
 			case <-m.doneChan:
+//				fmt.Println("done channel called")
+				ticker.Stop()
+				m.listeningStopped <- true
 				return
 			}
 		}
@@ -343,6 +347,9 @@ func (m *monome) poll(errHandler func(error), d Device) {
 					return
 				}
 			case <-m.doneChan:
+//				fmt.Println("done channel called")
+				ticker.Stop()
+				m.listeningStopped <- true
 				return
 			}
 		}
@@ -351,19 +358,19 @@ func (m *monome) poll(errHandler func(error), d Device) {
 }
 
 func (m *monome) StopListening() {
-	var closed bool
-	m.mx.RLock()
-	closed = m.closed
-	m.mx.RUnlock()
-	if closed {
+	//	fmt.Println("stop listening called")
+	if m.IsClosed() {
 		return
 	}
-
-	m.mx.Lock()
-	m.closed = true
 	m.doneChan <- true
-	//close(m.doneChan)
-	m.mx.Unlock()
+	/*
+		m.mx.Lock()
+		m.closed = true
+		//close(m.doneChan)
+		m.mx.Unlock()
+	*/
+	<-m.listeningStopped
+	//	fmt.Println("listening has stopped")
 }
 
 func (m *monome) Flash() {
@@ -452,13 +459,15 @@ func (m *monome) Close() (err error) {
 	if m.IsClosed() {
 		return nil
 	}
+
+	m.StopListening()
 	m.mx.Lock()
 	if !m.closed {
 		m.closed = true
-		err = m.dev.Close()
 	}
 	m.mx.Unlock()
 
+	err = m.dev.Close()
 	if err == nil {
 		return
 	}
@@ -504,6 +513,7 @@ func New(dev *usb.Device, options ...Option) (d *monome, err error) {
 		pollInterval: defaultPollInterval,
 	}
 	m.doneChan = make(chan bool)
+	m.listeningStopped = make(chan bool)
 
 	for _, opt := range options {
 		opt(m)
