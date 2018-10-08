@@ -175,7 +175,7 @@ func (m *testdevice) Set(x, y, brightness uint8) error {
 	return nil
 }
 
-func (m *testdevice) Read() error {
+func (m *testdevice) ReadMessage() error {
 	x, y, down, err := m.tester.Get()
 	if err != nil {
 		return err

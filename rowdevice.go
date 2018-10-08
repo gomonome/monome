@@ -150,7 +150,7 @@ func (m *rowDevice) Print(s string, dur time.Duration) error {
 	return &errs
 }
 
-func (m *rowDevice) Read() error {
+func (m *rowDevice) ReadMessage() error {
 	panic("don't call me")
 }
 

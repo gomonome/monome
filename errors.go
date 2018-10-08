@@ -54,6 +54,12 @@ func (e USBContextError) Error() string {
 	return string(e)
 }
 
+type ConnectionClosedError string
+
+func (c ConnectionClosedError) Error() string {
+	return fmt.Sprintf("the connection to device %s is closed", string(c))
+}
+
 type ConnectError struct {
 	USBDevice   *usb.Device
 	USBEndPoint struct {

@@ -1,8 +1,18 @@
 package monome
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
-type m64 struct{ mn *monome }
+type monomeConnection interface {
+	io.ReadWriter
+	Handler
+	Device
+	maxPacketSizeRead() uint16
+}
+
+type m64 struct{ mn monomeConnection }
 
 func (m *m64) String() string { return "monome64" }
 func (m *m64) Rows() uint8    { return 8 }
@@ -13,7 +23,7 @@ func (m *m64) Switch(x, y uint8, on bool) error {
 	if on {
 		first = 0x21
 	}
-	_, err := m.mn.usbWriter.Write([]byte{first, (x << 4) | y})
+	_, err := m.mn.Write([]byte{first, (x << 4) | y})
 	if err != nil {
 		var e Error
 		e.Device = m.String()
@@ -39,20 +49,20 @@ func (m *m64) Set(x, y, brightness uint8) error {
 	return e
 }
 
-func (m *m64) Read() error {
-	var b = make([]byte, m.mn.maxPacketSizeRead)
-	got, err := m.mn.usbReader.Read(b)
+func (m *m64) ReadMessage() error {
+	var b = make([]byte, m.mn.maxPacketSizeRead())
+	got, err := m.mn.Read(b)
 
 	if err != nil {
 		return ReadError{Device: m.String(), WrappedError: err}
 	}
 
-	if m.mn.h != nil && got > 2 {
+	if got > 2 {
 		for i := 2; i < got; i += 2 {
 			// fmt.Printf("b[i] % X  b[i+1] % X\n", b[i], b[i+1])
 			x, y := b[i+1]/16, b[i+1]%16
 			y = changeY(y)
-			m.mn.h.Handle(m.mn, x, y, b[i] == 0 /* down */)
+			m.mn.Handle(m.mn, x, y, b[i] == 0 /* down */)
 		}
 	}
 

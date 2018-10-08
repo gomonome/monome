@@ -79,9 +79,9 @@ type Device interface {
 	// Cols returns the number of cols
 	Cols() uint8
 
-	// Read reads a message from the device and calls the handler if necessary
+	// ReadMessage reads a message from the device and calls the handler if necessary
 	// It should normally not be called and is just there to allow external implementations of Device
-	Read() error
+	ReadMessage() error
 }
 
 type monomeDevice interface {
@@ -92,8 +92,9 @@ type monomeDevice interface {
 	// Switches the light at x,y on or off
 	Switch(x, y uint8, on bool) error
 
-	Read() error
 	String() string
+
+	ReadMessage() error
 }
 
 var _ monomeDevice = &m64{}
@@ -108,7 +109,7 @@ type monome struct {
 	usbWriter         io.Writer // usb.Endpoint
 	closed            bool
 	mx                sync.RWMutex
-	maxPacketSizeRead uint16
+	maxpacketSizeRead uint16
 	//	ticker            *time.Ticker
 	pollInterval time.Duration
 	/*
@@ -119,6 +120,34 @@ type monome struct {
 		usbWriterAddress  uint8
 	*/
 	doneChan chan bool
+}
+
+func (m *monome) maxPacketSizeRead() uint16 {
+	return m.maxpacketSizeRead
+}
+
+func (m *monome) Read(b []byte) (int, error) {
+	var closed bool
+	m.mx.RLock()
+	closed = m.closed
+	m.mx.RUnlock()
+	if closed {
+		return 0, ConnectionClosedError(m.String())
+	}
+
+	return m.usbReader.Read(b)
+}
+
+func (m *monome) Write(b []byte) (int, error) {
+	var closed bool
+	m.mx.RLock()
+	closed = m.closed
+	m.mx.RUnlock()
+	if closed {
+		return 0, ConnectionClosedError(m.String())
+	}
+
+	return m.usbWriter.Write(b)
 }
 
 func marquee(m Device, s string, dur time.Duration) error {
@@ -242,14 +271,31 @@ func (m *monome) poll(errHandler func(error), d Device) {
 		m.ticker = time.NewTicker(m.pollInterval)
 	*/
 	m.doneChan = make(chan bool)
-	tickChan := time.NewTicker(m.pollInterval).C
+	ticker := time.NewTicker(m.pollInterval)
+	tickChan := ticker.C
 
 	if errHandler == nil {
 		go func() {
 			for {
 				select {
 				case <-tickChan:
-					d.Read()
+					var closed bool
+					m.mx.RLock()
+					closed = m.closed
+					m.mx.RUnlock()
+					if closed {
+						return
+					}
+					err := d.ReadMessage()
+					if err != nil {
+						fmt.Printf("stop listening, because could not read from device %s: %v", m.String(), err)
+						ticker.Stop()
+						close(m.doneChan)
+						m.mx.Lock()
+						m.closed = true
+						m.mx.Unlock()
+						return
+					}
 				case <-m.doneChan:
 					return
 				}
@@ -260,8 +306,23 @@ func (m *monome) poll(errHandler func(error), d Device) {
 			for {
 				select {
 				case <-tickChan:
-					if err := d.Read(); err != nil {
+					var closed bool
+					m.mx.RLock()
+					closed = m.closed
+					m.mx.RUnlock()
+					if closed {
+						errHandler(ConnectionClosedError(m.String()))
+						return
+					}
+					if err := d.ReadMessage(); err != nil {
 						errHandler(err)
+						fmt.Printf("stop listening, because could not read from device %s: %v", m.String(), err)
+						ticker.Stop()
+						close(m.doneChan)
+						m.mx.Lock()
+						m.closed = true
+						m.mx.Unlock()
+						return
 					}
 				case <-m.doneChan:
 					return
@@ -358,6 +419,9 @@ func (m *monome) IsClosed() bool {
 }
 
 func (m *monome) Close() (err error) {
+	if m.IsClosed() {
+		return nil
+	}
 	m.mx.Lock()
 	if !m.closed {
 		m.closed = true
@@ -386,6 +450,18 @@ func (m *monome) NumButtons() uint8 {
 }
 
 var defaultPollInterval = 4 * time.Millisecond
+
+func (m *monome) Handle(d Device, x, y uint8, down bool) {
+	if m.h != nil {
+		m.h.Handle(d, x, y, down)
+		return
+	}
+	action := "release"
+	if down {
+		action = "press"
+	}
+	fmt.Printf("unhandled key %s on device %s: x: %d, y: %d\n", action, d.String(), x, y)
+}
 
 // New returns a new monome device for the given usb.Device.
 // Normally New should not be called directly, but
@@ -422,7 +498,7 @@ func New(dev *usb.Device, options ...Option) (d *monome, err error) {
 		e.WrappedError = err
 		return nil, &e
 	}
-	m.maxPacketSizeRead = setup.Endpoints[0].MaxPacketSize
+	m.maxpacketSizeRead = setup.Endpoints[0].MaxPacketSize
 
 	//	m.maxPacketSizeRead = setup.Endpoints[0].MaxPacketSize
 
@@ -450,7 +526,7 @@ func New(dev *usb.Device, options ...Option) (d *monome, err error) {
 		return nil, &errs
 	}
 	time.Sleep(time.Second)
-	var b = make([]byte, m.maxPacketSizeRead)
+	var b = make([]byte, int(m.maxpacketSizeRead))
 	_, err = m.usbReader.Read(b)
 
 	if err != nil {

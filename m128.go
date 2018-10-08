@@ -2,7 +2,7 @@ package monome
 
 import "fmt"
 
-type m128 struct{ mn *monome }
+type m128 struct{ mn monomeConnection }
 
 func (m *m128) String() string { return "monome128" }
 func (m *m128) Rows() uint8    { return 8 }
@@ -30,7 +30,7 @@ func (m *m128) Set(x, y, brightness uint8) error {
 	if brightness > 15 {
 		brightness = 15
 	}
-	_, err := m.mn.usbWriter.Write([]byte{24, y, x, brightness})
+	_, err := m.mn.Write([]byte{24, y, x, brightness})
 	if err != nil {
 		var e Error
 		e.Device = m.String()
@@ -43,9 +43,9 @@ func (m *m128) Set(x, y, brightness uint8) error {
 	return nil
 }
 
-func (m *m128) Read() error {
-	var b = make([]byte, m.mn.maxPacketSizeRead)
-	got, err := m.mn.usbReader.Read(b)
+func (m *m128) ReadMessage() error {
+	var b = make([]byte, int(m.mn.maxPacketSizeRead()))
+	got, err := m.mn.Read(b)
 
 	if err != nil {
 		return ReadError{
@@ -54,13 +54,13 @@ func (m *m128) Read() error {
 		}
 	}
 
-	if m.mn.h != nil && got > 2 {
+	if got > 2 {
 		for i := 2; i < got-2; i += 3 {
 			if b[i] == 0 {
 				continue
 			}
 			x, y := b[i+2], b[i+1]
-			m.mn.h.Handle(m.mn, x, y, b[i] == 0x21 /* down */)
+			m.mn.Handle(m.mn, x, y, b[i] == 0x21 /* down */)
 		}
 	}
 	return nil
