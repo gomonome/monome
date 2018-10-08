@@ -20,7 +20,7 @@ var (
 	removeDevice = make(chan monome.Device, 4)
 	addDevice    = make(chan monome.Device, 4)
 
-	cfg = config.MustNew("monome", "0.0.4", "demo a monome")
+	cfg = config.MustNew("monome", "0.0.5", "demo a monome")
 
 	rowCommand = cfg.MustCommand("row", "creates a rowdevice, based on all devices that could be found")
 	argRowName = rowCommand.NewString("name", "name of the row device", config.Default("ROW"))
