@@ -172,7 +172,7 @@ func (m *monome) Write(b []byte) (int, error) {
 func marquee(m Device, s string, dur time.Duration) error {
 	var errs Errors
 	s = strings.ToLower(s)
-	s += " "
+	s = "   " + s + " "
 	err := m.SwitchAll(false)
 	if err != nil {
 		e := err.(*Errors)
@@ -211,7 +211,17 @@ func marquee(m Device, s string, dur time.Duration) error {
 		for j := i; j < (i+width) && j < len(cols); j++ {
 
 			for row, on := range cols[j] {
-				err = m.Switch(uint8(row), targetCol, on)
+				//err = m.Switch(uint8(row), targetCol, on)
+				if on {
+					dist := width/2 - int(targetCol)
+					if dist < 0 {
+						dist *= (-1)
+					}
+					//err = m.Set(uint8(row), targetCol, uint8(15-dist))
+					err = m.Set(uint8(row), targetCol, uint8(targetCol+1))
+				} else {
+					err = m.Set(uint8(row), targetCol, 0)
+				}
 				if err != nil {
 					e := err.(Error)
 					what := "off"
@@ -316,7 +326,7 @@ func (m *monome) poll(errHandler func(error), d Device) {
 					return
 				}
 			case <-m.doneChan:
-//				fmt.Println("done channel called")
+				//				fmt.Println("done channel called")
 				ticker.Stop()
 				m.listeningStopped <- true
 				return
@@ -347,7 +357,7 @@ func (m *monome) poll(errHandler func(error), d Device) {
 					return
 				}
 			case <-m.doneChan:
-//				fmt.Println("done channel called")
+				//				fmt.Println("done channel called")
 				ticker.Stop()
 				m.listeningStopped <- true
 				return

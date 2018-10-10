@@ -10,9 +10,9 @@ import (
 )
 
 func setup(dev monome.Device) {
-	//		dev.Marquee(dev.String(), time.Millisecond*80)
+	dev.Marquee(dev.String(), time.Millisecond*100)
 	dev.SwitchAll(true)
-	time.Sleep(time.Microsecond * 200)
+	time.Sleep(time.Microsecond * 100)
 	dev.SwitchAll(false)
 	dev.SetHandler(monome.HandlerFunc(func(d monome.Device, x, y uint8, down bool) {
 		action := "released"
