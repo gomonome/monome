@@ -20,7 +20,7 @@ var (
 	removeConnection = make(chan monome.Connection, 4)
 	addConnection    = make(chan monome.Connection, 4)
 
-	cfg = config.MustNew("monome", "0.0.5", "demo a monome")
+	cfg = config.MustNew("monome", "0.0.7", "demo a monome")
 
 	rowCommand = cfg.MustCommand("row", "creates a row connection, based on all devices that could be found")
 	argRowName = rowCommand.NewString("name", "name of the row device", config.Default("ROW"))
