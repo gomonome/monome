@@ -3,7 +3,6 @@ package monome
 import (
 	"fmt"
 	"sort"
-	"time"
 )
 
 type sortByCol [][2]int
@@ -20,24 +19,25 @@ func (c sortByCol) Swap(a, b int) {
 	c[a], c[b] = c[b], c[a]
 }
 
-type rowDevice struct {
-	devices      []Device
+var _ Connection = &rowConnection{}
+
+type rowConnection struct {
+	devices      []Connection
 	colToDev     sortByCol
 	devToCol     map[int]uint8
 	devNameToDev map[string]int
 	name         string
 	cols         uint8
 	rows         uint8
-	numbuttons   uint8
 }
 
-// RowDevice creates a unified device out of a row of devices.
+// RowConnection creates a unified connection out of a row of connections.
 // The order is from left to right.
 // The number of columns is the sum of the columns of the devices.
 // The number of rows is the smallest number of rows of any device.
-func RowDevice(name string, devices ...Device) Device {
-	m := &rowDevice{
-		devices:      devices,
+func RowConnection(name string, connections ...Connection) Connection {
+	m := &rowConnection{
+		devices:      connections,
 		devToCol:     map[int]uint8{},
 		devNameToDev: map[string]int{},
 		name:         name,
@@ -49,7 +49,7 @@ func RowDevice(name string, devices ...Device) Device {
 	return m
 }
 
-func (m *rowDevice) calcOffsets() {
+func (m *rowConnection) calcOffsets() {
 	// find out the starting column for the device
 	var startCol int
 	var cols uint8
@@ -67,21 +67,20 @@ func (m *rowDevice) calcOffsets() {
 	}
 	m.cols = cols
 	m.rows = rows
-	m.numbuttons = cols * rows
 	sort.Sort(m.colToDev)
 }
 
 // Rows returns the minimum of rows, each device has
-func (m *rowDevice) Rows() uint8 {
+func (m *rowConnection) Rows() uint8 {
 	return m.rows
 }
 
 // Cols is the sum of the cols of the devices
-func (m *rowDevice) Cols() uint8 {
+func (m *rowConnection) Cols() uint8 {
 	return m.cols
 }
 
-func (m *rowDevice) Switch(x, y uint8, on bool) error {
+func (m *rowConnection) Switch(x, y uint8, on bool) error {
 	var bightness uint8
 	if on {
 		bightness = 15
@@ -100,7 +99,7 @@ func (m *rowDevice) Switch(x, y uint8, on bool) error {
 }
 
 // Set sets the lights to the corresponding device
-func (m *rowDevice) Set(x, y, brightness uint8) error {
+func (m *rowConnection) Set(x, y, brightness uint8) error {
 	var dev int = 0
 	var offset int = 0
 	for _, mp := range m.colToDev {
@@ -120,34 +119,37 @@ func (m *rowDevice) Set(x, y, brightness uint8) error {
 	return e
 }
 
-func (m *rowDevice) SetHandler(h Handler) {
+func (m *rowConnection) SetHandler(h Handler) {
 	for _, dev := range m.devices {
-		dev.SetHandler(HandlerFunc(func(d Device, x, y uint8, down bool) {
+		dev.SetHandler(HandlerFunc(func(d Connection, x, y uint8, down bool) {
 			h.Handle(m, x, m.devToCol[m.devNameToDev[d.String()]]+y, down)
 		}))
 	}
 }
 
-func (m *rowDevice) StartListening(errHandler func(error)) {
+func (m *rowConnection) StartListening(errHandler func(error)) {
 	for _, dev := range m.devices {
 		dev.StartListening(errHandler)
 	}
 }
 
-func (m *rowDevice) StopListening() {
+func (m *rowConnection) StopListening() {
 	for _, dev := range m.devices {
 		dev.StopListening()
 	}
 }
 
-func (m *rowDevice) String() string {
-	return fmt.Sprintf("%s%d", m.name, m.numbuttons)
+func (m *rowConnection) String() string {
+	return fmt.Sprintf("%s%d", m.name, NumButtons(m))
 }
 
+/*
 func (m *rowDevice) Marquee(s string, dur time.Duration) error {
 	return marquee(m, s, dur)
 }
+*/
 
+/*
 func (m *rowDevice) Print(s string, dur time.Duration) error {
 	var errs Errors
 	for _, dev := range m.devices {
@@ -161,22 +163,19 @@ func (m *rowDevice) Print(s string, dur time.Duration) error {
 	errs.Task = fmt.Sprintf("printing %q to row device %s", s, m.String())
 	return &errs
 }
+*/
 
-func (m *rowDevice) ReadMessage() error {
+func (m *rowConnection) ReadMessage() error {
 	panic("don't call me")
 }
 
-// NumButtons is the number of available buttons (cols*rows)
-func (m *rowDevice) NumButtons() uint8 {
-	return m.numbuttons
-}
-
+/*
 // SwitchAll switches all lights on or off
 // It returns the last error that happens and keeps trying to switch the rest as an error happens.
 func (m *rowDevice) SwitchAll(on bool) error {
 	var errs Errors
 	for _, dev := range m.devices {
-		errs.Add(dev.SwitchAll(on))
+		errs.Add(SwitchAll(dev, on))
 	}
 	if errs.Len() == 0 {
 		return nil
@@ -188,9 +187,10 @@ func (m *rowDevice) SwitchAll(on bool) error {
 	}
 	return &errs
 }
+*/
 
 // Close closes all devices
-func (m *rowDevice) Close() error {
+func (m *rowConnection) Close() error {
 	var errs Errors
 	for _, dev := range m.devices {
 		errs.Add(dev.Close())
@@ -203,7 +203,7 @@ func (m *rowDevice) Close() error {
 }
 
 // IsClosed only returns true, if all devices are closed
-func (m *rowDevice) IsClosed() bool {
+func (m *rowConnection) IsClosed() bool {
 	for _, dev := range m.devices {
 		if !dev.IsClosed() {
 			return false

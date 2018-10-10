@@ -2,15 +2,9 @@ package monome
 
 import (
 	"fmt"
-	"io"
 )
 
-type monomeConnection interface {
-	io.ReadWriter
-	Handler
-	Device
-	maxPacketSizeRead() uint16
-}
+var _ Device = &m64{}
 
 type m64 struct{ mn monomeConnection }
 

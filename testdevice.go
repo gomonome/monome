@@ -5,6 +5,8 @@ import (
 	"io"
 )
 
+var _ Device = &testdevice{}
+
 type Tester interface {
 	Get() (x, y uint8, down bool, err error)
 	Set(x, y, brightness uint8) error
@@ -132,7 +134,7 @@ func CloseTester(cols, rows uint8, clos func() error) Tester {
 }
 
 type testdevice struct {
-	mn     *monome
+	mn     *connection
 	tester Tester
 }
 
@@ -185,8 +187,8 @@ func (m *testdevice) ReadMessage() error {
 }
 
 // TestDevice returns a new (fake) monome device, based on the given tester
-func TestDevice(tester Tester, options ...Option) Device {
-	var m = &monome{
+func TestDevice(tester Tester, options ...Option) Connection {
+	var m = &connection{
 		dev:          tester,
 		pollInterval: defaultPollInterval,
 	}
@@ -195,6 +197,6 @@ func TestDevice(tester Tester, options ...Option) Device {
 		opt(m)
 	}
 
-	m.monomeDevice = &testdevice{m, tester}
+	m.Device = &testdevice{m, tester}
 	return m
 }

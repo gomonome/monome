@@ -2,10 +2,10 @@ package monome
 
 import "time"
 
-type Option func(*monome)
+type Option func(*connection)
 
 func PollInterval(interval time.Duration) Option {
-	return func(m *monome) {
+	return func(m *connection) {
 		m.pollInterval = interval
 	}
 }

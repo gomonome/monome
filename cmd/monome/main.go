@@ -13,63 +13,63 @@ import (
 )
 
 var (
-	devices      = map[string]monome.Device{}
-	sigchan      = make(chan os.Signal, 10)
-	stopScanning = make(chan bool)
-	cleanup      = make(chan bool)
-	removeDevice = make(chan monome.Device, 4)
-	addDevice    = make(chan monome.Device, 4)
+	connections      = map[string]monome.Connection{}
+	sigchan          = make(chan os.Signal, 10)
+	stopScanning     = make(chan bool)
+	cleanup          = make(chan bool)
+	removeConnection = make(chan monome.Connection, 4)
+	addConnection    = make(chan monome.Connection, 4)
 
 	cfg = config.MustNew("monome", "0.0.5", "demo a monome")
 
-	rowCommand = cfg.MustCommand("row", "creates a rowdevice, based on all devices that could be found")
+	rowCommand = cfg.MustCommand("row", "creates a row connection, based on all devices that could be found")
 	argRowName = rowCommand.NewString("name", "name of the row device", config.Default("ROW"))
 
-	scanCommand = cfg.MustCommand("scan", "scan for devices, allows to continously attach and detach devices")
+	scanCommand = cfg.MustCommand("scan", "scan for devices, allows to continously connect and disconnect to devices")
 )
 
-func initDevice(dev monome.Device) error {
+func initConnection(conn monome.Connection) error {
 	var speed = time.Millisecond * 100
-	if dev.String() == "monome64" {
+	if conn.String() == "monome64" {
 		speed = time.Millisecond * 80
 	}
-	if dev.String() == "monome128" {
+	if conn.String() == "monome128" {
 		speed = time.Millisecond * 50
 	}
-	err := dev.Marquee(dev.String(), speed)
+	err := monome.Marquee(conn, conn.String(), speed)
 	if err != nil {
 		return err
 	}
-	dev.SetHandler(monome.HandlerFunc(Handle))
-	dev.StartListening(func(err error) {
-		removeDevice <- dev
+	conn.SetHandler(monome.HandlerFunc(Handle))
+	conn.StartListening(func(err error) {
+		removeConnection <- conn
 	})
 	return nil
 }
 
-func manageDevices() {
+func manageConnections() {
 	for {
 		select {
-		case dev := <-removeDevice:
-			dev.StopListening()
+		case conn := <-removeConnection:
+			conn.StopListening()
 			time.Sleep(time.Millisecond * 30)
-			dev.Close()
-			delete(devices, dev.String())
-		case dev := <-addDevice:
-			devices[dev.String()] = dev
-			go func(d monome.Device) {
-				err := initDevice(d)
+			conn.Close()
+			delete(connections, conn.String())
+		case conn := <-addConnection:
+			connections[conn.String()] = conn
+			go func(d monome.Connection) {
+				err := initConnection(d)
 				if err != nil {
 					fmt.Printf("ERROR: %v\n", err)
-					removeDevice <- d
+					removeConnection <- d
 				}
-			}(dev)
+			}(conn)
 		case <-cleanup:
 			fmt.Println("cleanup")
-			for _, dev := range devices {
-				dev.StopListening()
+			for _, conn := range connections {
+				conn.StopListening()
 				time.Sleep(time.Millisecond * 100)
-				dev.Close()
+				conn.Close()
 			}
 			return
 		default:
@@ -78,7 +78,7 @@ func manageDevices() {
 	}
 }
 
-func scanForDevices() {
+func scanForConnections() {
 	t := time.NewTicker(time.Second)
 	for {
 		select {
@@ -87,10 +87,10 @@ func scanForDevices() {
 			t.Stop()
 			return
 		case <-t.C:
-			devs, _ := monome.Devices()
+			conns, _ := monome.Connections()
 
-			for _, dev := range devs {
-				addDevice <- dev
+			for _, conn := range conns {
+				addConnection <- conn
 			}
 		default:
 			runtime.Gosched()
@@ -99,18 +99,18 @@ func scanForDevices() {
 	}
 }
 
-type Devices []monome.Device
+type Connections []monome.Connection
 
-func (d Devices) Len() int {
+func (d Connections) Len() int {
 	return len(d)
 }
 
-func (d Devices) Swap(a, b int) {
+func (d Connections) Swap(a, b int) {
 	d[a], d[b] = d[b], d[a]
 }
 
-func (d Devices) Less(a, b int) bool {
-	return d[a].NumButtons() < d[b].NumButtons()
+func (d Connections) Less(a, b int) bool {
+	return monome.NumButtons(d[a]) < monome.NumButtons(d[b])
 }
 
 func run() error {
@@ -126,17 +126,17 @@ func run() error {
 
 	switch cfg.ActiveCommand() {
 	case rowCommand:
-		devs, _ := monome.Devices()
+		conns, _ := monome.Connections()
 
-		if len(devs) == 0 {
+		if len(conns) == 0 {
 			return fmt.Errorf("no monome devices found")
 		}
 
-		sdevs := Devices(devs)
-		sort.Sort(sdevs)
+		sconns := Connections(conns)
+		sort.Sort(sconns)
 
-		go manageDevices()
-		addDevice <- monome.RowDevice(argRowName.Get(), []monome.Device(sdevs)...)
+		go manageConnections()
+		addConnection <- monome.RowConnection(argRowName.Get(), []monome.Connection(sconns)...)
 
 		// listen for ctrl+c
 		go signal.Notify(sigchan, os.Interrupt)
@@ -150,8 +150,8 @@ func run() error {
 		os.Exit(0)
 
 	case scanCommand:
-		go manageDevices()
-		go scanForDevices()
+		go manageConnections()
+		go scanForConnections()
 
 		// listen for ctrl+c
 		go signal.Notify(sigchan, os.Interrupt)
@@ -165,15 +165,15 @@ func run() error {
 		fmt.Fprint(os.Stdout, "done\n")
 		os.Exit(0)
 	default:
-		devs, _ := monome.Devices()
+		conns, _ := monome.Connections()
 
-		if len(devs) == 0 {
+		if len(conns) == 0 {
 			return fmt.Errorf("no monome devices found")
 		}
-		go manageDevices()
+		go manageConnections()
 
-		for _, dev := range devs {
-			addDevice <- dev
+		for _, conn := range conns {
+			addConnection <- conn
 		}
 
 		// listen for ctrl+c
@@ -203,7 +203,7 @@ func main() {
 }
 
 // highlight the pressed buttons
-func Handle(d monome.Device, x, y uint8, down bool) {
+func Handle(d monome.Connection, x, y uint8, down bool) {
 	var action = "released"
 	if down {
 		action = "pressed"

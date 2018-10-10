@@ -4,6 +4,8 @@ import "fmt"
 
 type m128 struct{ mn monomeConnection }
 
+var _ Device = &m128{}
+
 func (m *m128) String() string { return "monome128" }
 func (m *m128) Rows() uint8    { return 8 }
 func (m *m128) Cols() uint8    { return 16 }

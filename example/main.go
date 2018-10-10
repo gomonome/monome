@@ -4,27 +4,23 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/gomonome/monome"
 )
 
-func setup(dev monome.Device) {
-	dev.Marquee(dev.String(), time.Millisecond*100)
-	dev.SwitchAll(true)
-	time.Sleep(time.Microsecond * 100)
-	dev.SwitchAll(false)
-	dev.SetHandler(monome.HandlerFunc(func(d monome.Device, x, y uint8, down bool) {
+func setup(conn monome.Connection) {
+	monome.Greeter(conn)
+	conn.SetHandler(monome.HandlerFunc(func(c monome.Connection, x, y uint8, down bool) {
 		action := "released"
 		if down {
 			action = "pressed"
 		}
-		fmt.Printf("%s %s key %v/%v\n", d, action, x, y)
+		fmt.Printf("%s %s key %v/%v\n", c, action, x, y)
 
 		// switch the lights
-		d.Switch(x, y, down)
+		c.Switch(x, y, down)
 	}))
-	dev.StartListening(func(err error) {
+	conn.StartListening(func(err error) {
 		// aborting on io error
 		sigchan <- os.Interrupt
 	})
@@ -38,15 +34,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	devices, _ := monome.Devices()
+	conns, _ := monome.Connections()
 
-	if len(devices) < 1 {
+	if len(conns) < 1 {
 		fmt.Fprintln(os.Stderr, "no monome device found")
 		os.Exit(1)
 	}
 
-	for _, dev := range devices {
-		setup(dev)
+	for _, conn := range conns {
+		setup(conn)
 	}
 
 	// listen for ctrl+c
@@ -57,8 +53,8 @@ func main() {
 
 	fmt.Fprint(os.Stdout, "\ninterrupted, cleaning up...")
 
-	for _, dev := range devices {
-		dev.Close()
+	for _, conn := range conns {
+		conn.Close()
 	}
 
 	fmt.Fprintln(os.Stdout, "done")
