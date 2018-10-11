@@ -20,15 +20,13 @@ var (
 	oscWriter        io.WriteCloser
 	sigchan          = make(chan os.Signal, 10)
 	stopScanning     = make(chan bool)
-	//	setPrefix        = make(chan string, 10)
-	cleanup = make(chan bool, 4)
-	//	sendMessage      = make(chan message, 10)
-	newConnection = make(chan monome.Connection, 4)
+	cleanup          = make(chan bool, 4)
+	newConnection    = make(chan monome.Connection, 4)
 
 	cfg           = config.MustNew("monome", "0.0.7", "monome creates and OSC connection to the first available monome")
 	argInaddress  = cfg.NewString("in", "address the monome is receiving from", config.Default("127.0.0.1:8082"))
 	argOutaddress = cfg.NewString("out", "address the monome is sending to", config.Default("127.0.0.1:8002"))
-	argPrefix     = cfg.NewString("prefix", "prefix for messages to address the monome device", config.Default("/grid"))
+	argPrefix     = cfg.NewString("prefix", "prefix for messages to address the monome device")
 )
 
 func main() {
@@ -60,8 +58,6 @@ func run() error {
 	}
 
 	fmt.Fprintf(os.Stdout, "listening on UDP %s\n", argInaddress.Get())
-
-	//	defer listener.StopListening()
 
 	oscWriter, err = osc.UDPWriter(argOutaddress.Get())
 
@@ -112,7 +108,6 @@ we only support
 /grid/led/level/set x y l
 */
 func (o oscHandler) Matches(path osc.Path) bool {
-	//return path.HasPrefix(prefix + "/grid/led")
 	return true
 }
 
@@ -166,7 +161,7 @@ func (o oscHandler) Handle(path osc.Path, values ...interface{}) {
 		}
 	case pref + "/grid/led/intensity":
 		// ignore
-	case "/duplex/tilt/set":
+	case pref + "/tilt/set":
 		// ignore
 	case "/sys/prefix":
 		prefix = values[1].(string)
@@ -186,24 +181,7 @@ func (o oscHandler) Handle(path osc.Path, values ...interface{}) {
 }
 
 func initConnection(conn monome.Connection) error {
-	var speed = time.Millisecond * 100
-	/*
-		if conn.String() == "monome64" {
-			speed = time.Millisecond * 50
-		}
-		if conn.String() == "monome128" {
-			speed = time.Millisecond * 50
-		}
-	*/
-	mn := prefix
-	if mn == "" {
-		mn = fmt.Sprintf("m%d", monome.NumButtons(conn))
-	}
-	//err := monome.Marquee(conn, fmt.Sprintf("%s>%s>%s", argInaddress.Get(), mn, argOutaddress.Get()), speed)
-	err := monome.Marquee(conn, mn, speed)
-	if err != nil {
-		return err
-	}
+	monome.Greeter(conn)
 	conn.SetHandler(monome.HandlerFunc(func(d monome.Connection, x, y uint8, down bool) {
 		//   /grid/key x y s
 		//   key state change at (x,y) to s (0 or 1, 1 = key down, 0 = key up).
@@ -218,8 +196,7 @@ func initConnection(conn monome.Connection) error {
 		cleanup <- true
 	})
 
-	listener.StartListening(oscHandler{})
-	return nil
+	return listener.StartListening(oscHandler{})
 }
 
 func sendMessage(msg message) {
