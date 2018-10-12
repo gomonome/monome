@@ -6,6 +6,8 @@ import (
 	"github.com/karalabe/gousb/usb"
 )
 
+var USBAccessError = fmt.Errorf("USB stack could not be opened. Probably missing rights. Try to run as admin.")
+
 type UnknownMonomeError struct {
 	Response          []byte
 	USBDevice         *usb.Device
