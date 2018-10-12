@@ -48,9 +48,9 @@ func (m *Errors) Error() string {
 	return fmt.Sprintf("%d errors happened while setting, typecast to monome.Errors to inspect them", m.Len())
 }
 
-type USBContextError string
+type _USBContextError string
 
-func (e USBContextError) Error() string {
+func (e _USBContextError) Error() string {
 	return string(e)
 }
 
