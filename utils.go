@@ -249,7 +249,8 @@ func findUSBDevices(vendor_id, product_id string) ([]*usb.Device, error) {
 	ctx, err := usb.NewContext()
 
 	if err != nil {
-		return nil, USBContextError(err.Error())
+		return nil, USBAccessError
+		//		return nil, USBContextError(err.Error())
 	}
 
 	defer ctx.Close()
@@ -263,7 +264,8 @@ func find(which string, options ...Option) ([]Connection, error) {
 	ctx, err := usb.NewContext()
 
 	if err != nil {
-		return nil, USBContextError(err.Error())
+		return nil, USBAccessError
+		//return nil, USBContextError(err.Error())
 	}
 
 	//	ctx.Debug(4)
@@ -273,7 +275,7 @@ func find(which string, options ...Option) ([]Connection, error) {
 	})
 
 	if err2 != nil {
-		return nil, USBContextError(err2.Error())
+		return nil, USBAccessError
 	}
 
 	var ms []Connection

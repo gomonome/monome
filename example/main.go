@@ -29,12 +29,19 @@ func setup(conn monome.Connection) {
 var sigchan = make(chan os.Signal, 10)
 
 func main() {
-	if os.Getenv("USER") != "root" {
-		fmt.Fprintln(os.Stderr, "please run as root")
+	/*
+		if os.Getenv("USER") != "root" {
+			fmt.Fprintln(os.Stderr, "please run as root")
+			os.Exit(1)
+		}
+	*/
+
+	conns, err := monome.Connections()
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
-
-	conns, _ := monome.Connections()
 
 	if len(conns) < 1 {
 		fmt.Fprintln(os.Stderr, "no monome device found")
