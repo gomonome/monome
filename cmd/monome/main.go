@@ -46,10 +46,6 @@ func run() error {
 		return err
 	}
 
-	if os.Getenv("USER") != "root" {
-		return fmt.Errorf("please run as root")
-	}
-
 	prefix = argPrefix.Get()
 
 	listener, err = osc.UDPListener(argInaddress.Get())
@@ -231,7 +227,14 @@ func scanForConnections() {
 			t.Stop()
 			return
 		case <-t.C:
-			conns, _ := monome.Connections()
+			conns, err := monome.Connections()
+
+			if err != nil {
+				fmt.Fprintf(os.Stdout, "ERROR: %v", err)
+				sigchan <- os.Interrupt
+				t.Stop()
+				return
+			}
 
 			for _, conn := range conns {
 				newConnection <- conn

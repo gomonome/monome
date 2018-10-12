@@ -87,7 +87,12 @@ func scanForConnections() {
 			t.Stop()
 			return
 		case <-t.C:
-			conns, _ := monome.Connections()
+			conns, err := monome.Connections()
+			
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v",err)
+				os.Exit(1)
+			}
 
 			for _, conn := range conns {
 				addConnection <- conn
@@ -120,13 +125,12 @@ func run() error {
 		return err
 	}
 
-	if os.Getenv("USER") != "root" {
-		return fmt.Errorf("please run as root")
-	}
-
 	switch cfg.ActiveCommand() {
 	case rowCommand:
-		conns, _ := monome.Connections()
+		conns, err := monome.Connections()
+		if err != nil {
+			return err
+		}
 
 		if len(conns) == 0 {
 			return fmt.Errorf("no monome devices found")
@@ -165,7 +169,11 @@ func run() error {
 		fmt.Fprint(os.Stdout, "done\n")
 		os.Exit(0)
 	default:
-		conns, _ := monome.Connections()
+		conns, err := monome.Connections()
+
+		if err != nil {
+			return err
+		}
 
 		if len(conns) == 0 {
 			return fmt.Errorf("no monome devices found")
